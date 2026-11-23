@@ -108,7 +108,28 @@ Muse audit, 2026-11-23 evening (read-only, no defect found):
   `checked_add` here would only defend against direct in-crate mutation of
   `regions` (as existing tests do), which is not a reachable production
   state. Revisit if `regions` ever stops being sorted/non-overlapping.
-- `stela-engine/src/blocks.rs` `BlockRuntime` (cache invalidation):
+- `stela-soc/src/aic.rs` (implementation, not just the header): construction
+  refuses empty dies (`layout.validate` rejects `dies.is_empty()`), zero or
+  non-multiple-of-32 MAX_IRQ, NR_IRQ outside 1..=MAX_IRQ, CPU count outside
+  1..=64, CPU sets naming CPUs beyond the count, and timestamp slots that
+  do not end before the IRQ_CFG array; read-only registers (VERSION/INFO1/
+  INFO3, event, HW_STATE, timestamps) refuse writes; reserved CONFIG and
+  timestamp-config fields are refused; timestamp configs naming a die or
+  IRQ the model does not have are refused; event reads claim and mask the
+  IRQ and refuse CPUs the AIC does not serve. No defect found in the parts
+  read (construction, `read_register`, `write_register`, `check_lifecycle`).
+- `stela-engine/src/machine/engine/native_failure.rs` (fault recovery):
+  variant learning is principled — a fault outside the host's native ranges
+  re-compiles the fetch page in the translated variant and invalidates the
+  page; one-sided/two-sided and tagged-page learning insert the page into
+  the board's sets and invalidate its blocks, with `Inserted::Full`
+  (set capacity) keeping the retry instead of dropping the fault. No
+  defect found in the part read.
+- Register sync (engine): no separate sync step exists by design — guest
+  registers live in `GuestState`, passed `&mut` into native blocks, so the
+  native code and the Rust state share one memory image. The `unsafe`
+  surface this relies on is large: 272 `unsafe {` blocks under
+  `stela-engine/src/machine/` were counted, not individually audited.
   the dispatch path is generation-checked — a loaded block only runs when
   `block.generation == current.generation` ("refusing stale block execution"),
   and same-base `register_code` advances the generation and drops the loaded
@@ -157,11 +178,14 @@ Not audited (do not read this as "correct"):
   code and `machine/`. Exit validation (`blocks/validate.rs`) is now
   audited — see above. Cache invalidation is now partly audited — see the
   `BlockRuntime` finding above (production `machine/engine` invalidation
-  paths read, `source_overlaps` dead-code finding recorded). Still open:
-  fault recovery, register sync, parallel execution, `unsafe` blocks.
+  paths read, `source_overlaps` dead-code finding recorded). Fault recovery
+  (`native_failure.rs` variant learning) and register sync (shared
+  `GuestState`) are now audited — see above. Still open: parallel
+  execution, and the 272 `unsafe` blocks under `machine/` individually.
 - stela-soc: AIC, PMGR, ANS, DART and all other device models beyond
-  `regfile`/`amcc`. (AIC header documentation now read — see above. Still
-  open: AIC register implementation, PMGR, ANS, DART.)
+  `regfile`/`amcc`. AIC (header, construction, `read_register`,
+  `write_register`, `check_lifecycle`) is now audited — see above. Still
+  open: PMGR, ANS, DART and the remaining device models.
 
 Three parallel read-only audit agents were started for the three crates and
 all three were cut off by an API rate limit before returning any finding, so
