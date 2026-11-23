@@ -178,6 +178,21 @@ fall-through — one commit each, each validated by a new `crate-tests`
 run. stela-engine still has no baseline (blocked behind the compiler
 in the same job); it will run once the compiler passes.
 
+## CI run #2 (2026-11-23, commit `9b79d88`, the `half::fused` fix)
+
+Run https://github.com/SaeedTest6/Stela/actions/runs/45248002772 —
+completed, conclusion **failure**, 12m 9s (Test step 10m 49s).
+stela-compiler: **1564 passed, 6 failed, 20 ignored** (was 1563/7).
+
+- The `half::fused` fix is **confirmed**: `models_match_the_host_instructions`
+  now passes (log line 1348). One failure down, by the minimal fix.
+- The same 6 half-precision SIMD tests still fail with the same first
+  panic inputs as run #1 (FDIV `6e453c83` with zero dividends; the five
+  conversions with inputs `[0, 1, 2, 3, 4, 5, 6, 7]`), as expected —
+  their guards were not touched by this commit.
+- stela-engine still never ran: cargo stops at the first failing
+  package, so its suite stays unbaselined until the compiler is green.
+
 ## Baseline (before this session's code change)
 
 | Crate | Result |
