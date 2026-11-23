@@ -139,6 +139,20 @@ Muse audit, 2026-11-23 evening (read-only, no defect found):
   `shared_memory/host.rs` (23); `machine/engine.rs` and `machine/cpu.rs`
   contain none. Individual review of the remaining production `unsafe`
   blocks is still open.
+- `stela-soc/src/uart.rs` (S5L UART): documented against XNU/Linux;
+  inferred threshold/reset behaviors labeled as inferred; UTXH written
+  while the TX FIFO is full or while transmit mode is disabled is refused;
+  write-only registers refuse reads. No defect found in the parts read.
+- `stela-soc/src/smc.rs` (SMC key endpoint): protocol documented against
+  26A434 kernelcache addresses and Linux `macsmc`; key values are bounded
+  to 1..=120 bytes, duplicate keys and count overflow are refused, and
+  unqualified system events (`lpem`, `hiba`, unknown effects) refuse.
+  No defect found in the parts read.
+- `stela-soc/src/spi.rs` (SPI): aligned 32-bit accesses only; unmodeled
+  registers refuse; RX FIFO underflow is refused; RXDATA consumption is
+  transactional — a byte popped from the RX FIFO is pushed back if the
+  following pump fails — and the write path snapshots full state before
+  mutating. No defect found in the parts read.
 - `stela-soc/src/pmgr.rs` (PMGR power states): writes refuse reserved
   fields, RESET or DEV_DISABLE without a connected lifecycle, reset
   unless the domain is active and quiesced, and power changes while reset
@@ -228,9 +242,9 @@ Not audited (do not read this as "correct"):
   production `unsafe` blocks under `machine/` (notably
   `shared_memory/host.rs`).
 - stela-soc: AIC, PMGR, ANS, DART and all other device models beyond
-  `regfile`/`amcc`. AIC, PMGR, ANS and DART are now audited — see above.
-  Still open: the remaining device models (SEP, DCP, AGX, UART, USB, SMC,
-  SPI, I2C, GPIO, SPMI, and others under `stela-soc/src/`).
+  `regfile`/`amcc`. AIC, PMGR, ANS, DART, UART, SMC and SPI are now
+  audited — see above. Still open: the remaining device models (SEP, DCP,
+  AGX, USB, I2C, GPIO, SPMI, and others under `stela-soc/src/`).
 
 Three parallel read-only audit agents were started for the three crates and
 all three were cut off by an API rate limit before returning any finding, so
