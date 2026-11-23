@@ -67,6 +67,117 @@ diagnosed; the `source_overlaps` fix waits behind them. Next step:
 read `modeled.rs` around line 1418 and the two half-precision test files
 to find the root cause of each group.
 
+## Diagnosis of the 7 failures (2026-11-23, panic text read from run #1)
+
+Full panic messages were read from the run #1 Test-step log (lines
+1755–1807) after signing in as SaeedTest6; the log is otherwise not
+available to the API. All six SIMD failures are on the **detected host
+target** (`TargetCpu { tier: Sse42, features: 564050001919 }` =
+0x8353FFFFFF: AVX512-FP16 + AVX512-VL present, bit 41
+`DataIndependentTiming` clear). The fixed targets (Baseline, V2,
+V2+f16c, V3) pass these cases; the host takes the AVX512-FP16 native
+paths. The `tier` field is capped at Sse42 by `from_cpuid` (it only
+looks at SSSE3/SSE4.1/SSE4.2 bits); the feature bitmask carries the
+AVX512 capability.
+
+### 1. EVEX FMA model vs host — model bug in `half::fused`
+
+`crates/stela-compiler/src/x86_64/modeled.rs:1418`, test
+`models_match_the_host_instructions`. Failing instruction (hex-debug
+format): `Instruction { evex: true, map: 6, opcode: 98, pp: 1, w:
+false, bytes: 10 (=16), reg: 1, vvvv: 2, rm: 3, opmask: 1, zeroing:
+false, imm: 0 }`, `sample=187` — VFMADD132PH, 128-bit, opmask K1,
+merging. Lane 2 of the 32-byte result differs: host `0x7FF6`, model
+`0xFE00`; MXCSR host `32640` (0x7F80), model `32641` (0x7F81, IE set).
+
+Root cause: `half::fused` (modeled.rs:567) checks the 0×∞ product
+*before* the NaN-operand branch, so a 0×∞ product with a NaN addend
+returns the indefinite QNaN (`0xFE00`, `INVALID`). The real host
+returns the NaN addend quieted (`0x7FF6`) and raises no invalid
+exception: the NaN operand takes precedence over the 0×∞ invalid.
+The function's own doc comment asserts the wrong rule ("Infinity
+times zero is invalid even with a NaN addend") and must be corrected
+with the fix.
+
+Fix approach: require the addend to be non-NaN in the 0×∞ check (or
+move that check after the NaN branch), so a NaN operand anywhere
+returns the first NaN quieted with INVALID only when that NaN is
+signaling. Proving test: the existing
+`models_match_the_host_instructions` (it already covers this sample);
+no test change needed. Severity: high for translation correctness —
+a wrong MXCSR and a wrong NaN payload in a fused multiply-add.
+
+### 2. Half divide exits on zero dividends — native-path coverage bug
+
+`x86_64::simd::arithmetic::half_tests::half_arithmetic_lanes_match_the_reference`
+(half_tests.rs:161). Word `0x6e453c83` = FDIV .8H (FORMS base
+`0x6e40_3c00`), fpcr `0x0`, host target. Inputs (left, right) per lane:
+`(0, 344e), (8000, 4900), (3f87, a903), (3c00, 2df3), (77bf, b97a),
+(4580, 4580), (be48, cafe), (4b80, 911c)` — all 8 lanes covered per
+the reference (`covered` requires normal inputs with a normal result,
+or a signed-zero input beside a normal/zero one).
+
+Root cause: on the AVX512-FP16 host, `half::emit` takes `emit_native`
+(`x86_64/simd/arithmetic/half.rs`), which guards both sources with
+`vector_exponent_range` (`numerical.rs`: valid iff `0 < exponent <
+31`, normal only). Lanes 0 and 1 have zero dividends (±0, exponent 0)
+and are rejected to the helper, although the test requires zero-input
+lanes to complete inline and the non-native lane recipe handles them
+via `zero::substitute`. VDIVPH computes 0/normal = 0 exactly, so the
+guard is stricter than the hardware needs.
+
+Fix approach: accept signed zeros in the native guard (e.g.
+`vector_normal_or_zero_range`, which exists for exactly this), while
+still rejecting a zero divisor for divide (x/0 is excluded from
+coverage and its DZ status needs the helper). Proving test: the
+existing half-arithmetic test. Severity: medium — covered divide
+cases exit instead of executing inline (correctness of the exit path
+itself is not in question; the helper handles them).
+
+### 3. Half-to-integer exits on zero/subnormal inputs — native-path coverage bug
+
+Five tests in `x86_64::simd::half_integer_tests.rs:189`, all on the
+host target, fpcr `0x0`, inputs `[0, 1, 2, 3, 4, 5, 6, 7]` (lanes
+0–3 active, `.4H` form): plain FCVTZS `0ef9b883`, nearest-away
+`0e79c883`, nearest-even `0e79a883`, toward-negative `0e79b883`,
+toward-positive `0ef9a883`. The test requires *every* input to
+complete inline when no exception traps are enabled
+(`covered = fpcr & FPCR_EXCEPTION_ENABLE_MASK == 0`), subnormals
+included.
+
+Root cause: on the FP16 host the field recipe does not apply
+(`half_integer::applies` is false when the host supports half), so
+`to_integer_with` (`integer_conversion.rs`) uses the packed path,
+whose `guard_float_input` applies the same normal-only
+`vector_exponent_range`. Exponent-0 lanes (zero and subnormals 1, 2,
+3) are rejected, although the reference converts them inline to 0
+(a subnormal half is a valid tiny value; VCVTPH2DQ rounds it to 0).
+
+Fix approach: narrow the guard to lanes that actually need the helper
+(NaN/infinite/out-of-range), letting zero/subnormal lanes through the
+native conversion. Proving test: the five existing tests.
+
+Additional stacked bug, FCVTAS (nearest-away) only: `fast_to_integer`
+returns `None` for half by construction (`format == Format::Half`,
+integer_conversion.rs:323), and `to_integer_with` turns a `None`
+fast path for `NearestAway` into an unconditional `helper(code, pc)`
+— every FCVTAS input exits on the FP16 host, not just subnormals.
+Fix approach: fall through to the packed path (with ties-away
+handling) instead of an unconditional exit. Proving test: the
+nearest-away test above.
+
+### Common thread
+
+Six of the seven failures are the AVX512-FP16 native paths being
+stricter than the reference coverage: their input guards reject
+zero/subnormal lanes the reference completes inline. The fixed
+targets pass because they use the lane/field recipes, which handle
+those lanes. The fix order is: (1) the `half::fused` model bug, then
+(2) the divide guard, then (3) the conversion guard plus the FCVTAS
+fall-through — one commit each, each validated by a new `crate-tests`
+run. stela-engine still has no baseline (blocked behind the compiler
+in the same job); it will run once the compiler passes.
+
 ## Baseline (before this session's code change)
 
 | Crate | Result |
