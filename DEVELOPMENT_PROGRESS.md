@@ -139,6 +139,36 @@ Muse audit, 2026-11-23 evening (read-only, no defect found):
   `shared_memory/host.rs` (23); `machine/engine.rs` and `machine/cpu.rs`
   contain none. Individual review of the remaining production `unsafe`
   blocks is still open.
+- `stela-soc/src/dwc3.rs` (DWC3 USB2 device core): disabled-device
+  handoff with four masked empty event buffers; full event rings
+  backpressure without overwriting entries; event DMA addresses use
+  `checked_add`; a DMA failure poisons the controller until software
+  reset and nothing is retried behind the owner's back; unmodeled
+  endpoint commands refuse; OTG and reserved PRTCAPDIR selections
+  refuse. No defect found in the parts read.
+- `stela-soc/src/scanout.rs` (host scanout): a swap completes only after
+  the scanout has consumed the pixels, so the guest never recycles a
+  surface the host is still reading; only changed rows (damage) are
+  composed again; pixel offsets use `checked_mul`/`checked_add` chains;
+  formats the model cannot convert are refused explicitly. No defect
+  found in the parts read.
+- `stela-soc/src/fuse.rs` (eFuse): calibration fields read 0 rather than
+  invented values; every other register refuses; fuses are read-only.
+  No defect found in the file as read.
+- `stela-soc/src/typec.rs` (Type-C): connection generation exhaustion
+  refuses without reusing a generation. No defect found in the parts read.
+- `stela-soc/src/wake.rs` (AOP wake): unsupported wake sources refuse.
+  No defect found in the parts read.
+- `stela-soc/src/ipi.rs` (fast IPIs): unmodeled requests refuse;
+  no-wake requests are refused because their effect on a waiting CPU is
+  unmodeled. No defect found in the parts read.
+- `stela-soc/src/nor.rs` (NOR flash): unsupported commands refuse
+  before their byte is accepted; a program exceeding the modeled page
+  buffer refuses; an incomplete command at CS rising refuses. No defect
+  found in the parts read.
+- `stela-soc/src/pmu.rs` + `power.rs` (PMU/power, sampled): the upcount
+  follows the system counter and refuses writes; unmodeled slave effects
+  refuse. No defect found in the parts read.
 - `stela-soc/src/wdt.rs` (watchdog): a bite never resets the host — it
   becomes a `ResetRequest` the engine reports when it stops the guest;
   the reg[2] deadline mechanism counts system-counter seconds and
@@ -295,12 +325,11 @@ Not audited (do not read this as "correct"):
   `shared_memory/host.rs`).
 - stela-soc: AIC, PMGR, ANS, DART and all other device models beyond
   `regfile`/`amcc`. AIC, PMGR, ANS, DART, UART, SMC, SPI, I2C, GPIO, AGX,
-  USB, DCP, SEP, SPMI, WDT, ASC, RTKit and MCC are now audited — see
-  above. Still open: the remaining device models under `stela-soc/src/`
-  not named here (notably `dwc3` at 1532 lines, `scanout` at 2888 lines,
-  `nor`, `pmu`, `power`, `sart`, `typec`, `dcs`, `display`, `cluster`,
-  `coresight`, `energy`, `fuse`, `hpm`, `ipi`, `lockdown`, `passive`,
-  `perf`, `ptd`, `wake`).
+  USB, DCP, SEP, SPMI, WDT, ASC, RTKit, MCC, DWC3, scanout, fuse, typec,
+  wake, IPI, NOR, PMU and power are now audited — see above. Still open:
+  the remaining device models under `stela-soc/src/` not named here
+  (`sart`, `dcs`, `display`, `cluster`, `coresight`, `energy`, `hpm`,
+  `lockdown`, `passive`, `perf`, `ptd`).
 
 Three parallel read-only audit agents were started for the three crates and
 all three were cut off by an API rate limit before returning any finding, so
