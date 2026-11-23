@@ -25,10 +25,47 @@ Muse audit (2026-11-23 evening, continuing from `6ac8b29`): no Rust toolchain
 is installed on the Muse VM at all, and the local clone must not be built or
 run there (execution-risk check on the cloned content). Muse therefore audited
 by reading code only and did not run any test locally. Validation of any future
-change must come from GitHub CI. Note: `.github/workflows/ci.yml` triggers on
-push to `main`, pull requests and `workflow_dispatch` only — a push to this
-development branch alone runs no CI. To get CI results for a change on this
-branch, open a PR against `main` (do not merge it) or dispatch the workflow.
+change must come from GitHub CI. `.github/workflows/crate-tests.yml`
+(commit `edd64c1`, 2026-11-23) runs `cargo test --locked -p
+stela-contracts -p stela-soc-data -p stela-soc -p stela-compiler
+-p stela-engine` on ubuntu-24.04 with the pinned 1.99.1 toolchain, on pushes
+to this branch, pull requests and `workflow_dispatch`. The main `ci.yml`
+still only tests stela-cli.
+
+## CI baseline (2026-11-23, crate-tests run #1, commit `edd64c1`)
+
+Run https://github.com/SaeedTest6/Stela/actions/runs/45238303398 —
+completed, conclusion **failure**, 12m 20s (Test step 11m 8s). All setup
+steps passed (checkout, LLVM 21, cache, Rust 1.99.1 install); only the
+`Test` step failed. Per-crate outcome, from cargo's stop-on-first-failure
+order: stela-contracts, stela-soc-data and stela-soc passed (they run
+before the compiler and cargo would have stopped there); **stela-compiler
+failed with 7 failing tests out of 1590 (1563 passed, 20 ignored)**;
+stela-engine never ran (it comes after the compiler). No compile error.
+
+Failing tests, all in `crates/stela-compiler/src/`:
+
+- `x86_64::modeled::tests::models_match_the_host_instructions`
+  (`x86_64/modeled.rs:1418`): an EVEX instruction model disagrees with
+  the host — map 6, opcode 98, left 32640 vs right 32641. A modeled x86
+  instruction's encoding/behavior differs from the real host instruction
+  by one — a translation-correctness finding in scope A, not covered by
+  the earlier audit (modeled.rs was not read).
+- Six half-precision (FP16) SIMD reference tests, all "covered input
+  exited" instead of producing a result:
+  `x86_64::simd::arithmetic::half_tests::half_arithmetic_lanes_match_the_reference`
+  (`half_tests.rs:161`) and five `half_to_integer_*_fields_match_the_reference`
+  tests (`half_integer_tests.rs:189` — plain, nearest-away, nearest-even,
+  toward-negative, toward-positive). Also translation-correctness findings
+  in scope A; the earlier SIMD/FP audit covered the arithmetic paths
+  (`simd/arithmetic.rs`, `aarch64/floating.rs`) but not these half-precision
+  test harnesses.
+
+Consequence: the development-branch baseline is **not green**. No
+behavioral fix should be validated against CI until these 7 failures are
+diagnosed; the `source_overlaps` fix waits behind them. Next step:
+read `modeled.rs` around line 1418 and the two half-precision test files
+to find the root cause of each group.
 
 ## Baseline (before this session's code change)
 
@@ -396,7 +433,10 @@ no agent findings exist and none are recorded here.
 
 ## Open items
 
-- Obtain the baseline for stela-compiler and stela-engine (long builds/tests).
+- Diagnose the 7 failing stela-compiler tests from CI baseline run #1
+  (EVEX model mismatch + 6 half-precision SIMD reference failures) and fix
+  them; stela-engine still has no baseline (its tests never ran — blocked
+  behind the compiler failure).
 - Environment: a 1.99.1 toolchain is needed to reproduce CI results exactly.
 - Targeted audits listed under "Not audited", each with a failing test before
   any fix.
