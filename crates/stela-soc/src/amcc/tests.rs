@@ -443,3 +443,11 @@ fn native_cache_geometry_refuses_wrapped_or_zero_plane_spans_before_allocating()
         .is_err()
     );
 }
+
+#[test]
+fn shipped_span_tables_never_overlap() {
+    // regfile::role refuses an offset two spans cover, so an overlap in
+    // these tables would silently remove those registers from the model.
+    assert_eq!(regfile::first_overlap(&T8112_PLANE), None);
+    assert_eq!(regfile::first_overlap(&T8112_SHARED), None);
+}
