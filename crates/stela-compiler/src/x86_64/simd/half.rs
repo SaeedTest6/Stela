@@ -237,7 +237,11 @@ pub(super) fn run_native(
     super::numerical::restore_environment(code);
     helper.push(super::numerical::reject_other_status(code));
     super::numerical::prepare_half_result_range(code);
-    super::numerical::vector_exponent_range(code, Format::Half, shape, LEFT);
+    // A signed-zero result completes inline like a normal one in range;
+    // subnormal and minimum-normal results still take the helper. RESULT
+    // is the lane recipe's register and dead on the native path, so it
+    // serves as the range classifier's scratch.
+    super::numerical::vector_normal_or_zero_range(code, Format::Half, shape, LEFT, RESULT);
     helper.push(branch(code, Condition::NotZero));
     super::numerical::commit_inexact(code);
 }

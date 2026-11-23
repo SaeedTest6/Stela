@@ -13,6 +13,7 @@ use super::super::super::isa::ShiftOpcode;
 use super::super::numerical::{
     ArithmeticOpcode, Condition, branch, emit_opcode_to, prepare_vector_input_range,
     read_numerical_right, read_numerical_vector, test_control, vector_exponent_range,
+    vector_normal_or_zero_range,
 };
 use super::super::{Host, commit, half as lanes, packed, packed_imm, read_vector};
 use crate::{
@@ -164,8 +165,24 @@ fn emit_native(code: &mut Code, operand: &Operand, pc: GuestAddress) {
     let mut helper = vec![branch(code, Condition::NotZero)];
     prepare_inputs(code, operand);
     prepare_vector_input_range(code, Format::Half);
+    // Signed-zero inputs complete inline: the host operation is exact for
+    // them, as the lane recipe's zero substitution already proves. A zero
+    // divisor for divide stays rejected: its divide-by-zero status needs
+    // the helper. LEFT_ODD is dead after `prepare_inputs` and serves as
+    // the range classifier's scratch.
+    let divide = operand.operation == BinaryOperation::Divide;
     for source in [lanes::LEFT, lanes::RIGHT] {
-        vector_exponent_range(code, Format::Half, operand.shape, source);
+        if divide && source == lanes::RIGHT {
+            vector_exponent_range(code, Format::Half, operand.shape, source);
+        } else {
+            vector_normal_or_zero_range(
+                code,
+                Format::Half,
+                operand.shape,
+                source,
+                LEFT_ODD,
+            );
+        }
         helper.push(branch(code, Condition::NotZero));
     }
     lanes::run_native(code, operand.shape, &mut helper, |code| {
