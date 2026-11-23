@@ -118,6 +118,26 @@ Muse audit, 2026-11-23 evening (read-only, no defect found):
   IRQ the model does not have are refused; event reads claim and mask the
   IRQ and refuse CPUs the AIC does not serve. No defect found in the parts
   read (construction, `read_register`, `write_register`, `check_lifecycle`).
+- `stela-soc/src/pmgr.rs` (PMGR power states): writes refuse reserved
+  fields, RESET or DEV_DISABLE without a connected lifecycle, reset
+  unless the domain is active and quiesced, and power changes while reset
+  is held; target states other than 0 (power-gated), 4 (clock-gated) and
+  15 (active) are refused; WAS_* bits are write-one-to-clear and latch on
+  transitions into gated states; reads are plain and 32-bit only; unknown
+  registers refuse. No defect found in the parts read.
+- `stela-soc/src/ans.rs` + `ans/commands.rs` + `ans/prp.rs` (ANS2 NVMe):
+  unknown admin/I/O opcodes refuse; queue creation validates contiguity,
+  CQ 1 and extent wrap; boot-from-host transfers are bounded by MDTS and
+  refused outside MODESEL 4; PRP lists scatter across pages, chain at the
+  page end, and validate the readable prefix before reporting a later
+  fault. No defect found in the parts read.
+- `stela-soc/src/dart.rs` (DART IOMMU): generation selection is explicit
+  (a compatible string is never a generation alias); stream count is
+  validated against the selected profile's limit; a DART group requires a
+  nonzero count (`assert` in `group`, `Err` in `group_for_profile`); the
+  paired SMMU view attaches only once and only when supported;
+  `resolve` walks without recording or signalling a fault, unlike
+  `translate`. No defect found in the file as read.
 - `stela-engine/src/machine/engine/native_failure.rs` (fault recovery):
   variant learning is principled — a fault outside the host's native ranges
   re-compiles the fetch page in the translated variant and invalidates the
@@ -183,9 +203,9 @@ Not audited (do not read this as "correct"):
   `GuestState`) are now audited — see above. Still open: parallel
   execution, and the 272 `unsafe` blocks under `machine/` individually.
 - stela-soc: AIC, PMGR, ANS, DART and all other device models beyond
-  `regfile`/`amcc`. AIC (header, construction, `read_register`,
-  `write_register`, `check_lifecycle`) is now audited — see above. Still
-  open: PMGR, ANS, DART and the remaining device models.
+  `regfile`/`amcc`. AIC, PMGR, ANS and DART are now audited — see above.
+  Still open: the remaining device models (SEP, DCP, AGX, UART, USB, SMC,
+  SPI, I2C, GPIO, SPMI, and others under `stela-soc/src/`).
 
 Three parallel read-only audit agents were started for the three crates and
 all three were cut off by an API rate limit before returning any finding, so
