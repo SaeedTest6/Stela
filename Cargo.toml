@@ -82,7 +82,7 @@ stela-compiler = { path = "crates/stela-compiler" }
 stela-fingerprint = { path = "crates/stela-fingerprint" }
 stela-drivers = { path = "crates/stela-drivers" }
 stela-contracts = { path = "crates/stela-contracts" }
-stela-formats = { path = "crates/stela-formats" }
+stela-formats = { path = "crates/stela-formats", default-features = false }
 stela-engine = { path = "crates/stela-engine" }
 stela-soc-data = { path = "crates/stela-soc-data" }
 stela-soc = { path = "crates/stela-soc" }
