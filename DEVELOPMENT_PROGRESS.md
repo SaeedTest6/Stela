@@ -193,6 +193,24 @@ stela-compiler: **1564 passed, 6 failed, 20 ignored** (was 1563/7).
 - stela-engine still never ran: cargo stops at the first failing
   package, so its suite stays unbaselined until the compiler is green.
 
+## Fix #2 — FP16 native path accepts signed zeros (commit `c120df4`)
+
+`crates/stela-compiler/src/x86_64/simd/arithmetic/half.rs`
+(`emit_native`) and `crates/stela-compiler/src/x86_64/simd/half.rs`
+(`run_native`): the input and result guards now use
+`vector_normal_or_zero_range` instead of `vector_exponent_range`, so
+signed-zero inputs and results complete inline. A zero divisor for
+divide stays rejected (its divide-by-zero status needs the helper);
+subnormal, minimum-normal and infinite results still exit, matching
+the reference coverage. Scratch registers: `LEFT_ODD` (XMM6, dead
+after `prepare_inputs`) for the input guards, `RESULT` (XMM6, the lane
+recipe's register, dead on the native path) for the result guard.
+`reject_other_status` (MXCSR bits 0–4, including divide-by-zero)
+still guards the native operation. Proving test:
+`half_arithmetic_lanes_match_the_reference`. CI run #3:
+https://github.com/SaeedTest6/Stela/actions/runs/45256689749 —
+pending at push time; a watch cron checks it every 20 minutes.
+
 ## Baseline (before this session's code change)
 
 | Crate | Result |
