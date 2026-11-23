@@ -139,6 +139,39 @@ Muse audit, 2026-11-23 evening (read-only, no defect found):
   `shared_memory/host.rs` (23); `machine/engine.rs` and `machine/cpu.rs`
   contain none. Individual review of the remaining production `unsafe`
   blocks is still open.
+- `stela-soc/src/i2c.rs` (I2C): invalid/reserved/duplicate target
+  addresses refuse; attaching a target during a transfer refuses; power
+  off, clock gated or reset asserted refuse; FIFO data without START
+  refuses; refusals name the transaction and stop the machine rather than
+  presenting the target as absent (NACK). No defect found in the parts read.
+- `stela-soc/src/gpio.rs` (GPIO): a pin interrupt routed to a group
+  without a line refuses; an undetermined level refuses rather than
+  guessing whether it asserts; two board nets on one pin, invalid pin/
+  group geometry and unmodeled modes/registers refuse. No defect found in
+  the parts read.
+- `stela-soc/src/agx.rs` + submodules (AGX GPU): Apple's GFX firmware is
+  not executed and GPU work is not executed — every GPU-work channel
+  command refuses by name; the model only starts and idles the driver.
+  No defect found in the part read (module index + documented scope).
+- `stela-soc/src/usb.rs` (USB bus peers): a NAK has no payload effect;
+  DMA failures remain errors and are never a USB ACK; route strings are
+  parsed per xHCI 1.2 8.9 with a terminating zero port. No defect found in
+  the file as read.
+- `stela-soc/src/dcp.rs` + submodules (DCP display coprocessor): the
+  `ipad14dcp` firmware never runs; the pipeline terminates at the AP
+  boundary with one fixed, connected SDR monitor; every call, callback,
+  refusal and AFK message is recorded in a bounded display log. No defect
+  found in the part read (header + documented scope).
+- `stela-soc/src/sep.rs` + submodules (SEP): each advertised service
+  answers only the requests whose contract is recovered and refuses the
+  rest rather than faking a reply; unadvertised services stay
+  unadvertised; SEPROM accepts the container under Stela's own explicit,
+  TSS-free trust policy. No defect found in the part read (header +
+  documented scope).
+- `stela-soc/src/spmi.rs` (SPMI): unmodeled control-field effects
+  refuse; an empty pop refuses; physical reset/rail loss and armed-source
+  wake behavior refuse; response overflow refuses. No defect found in the
+  parts read.
 - `stela-soc/src/uart.rs` (S5L UART): documented against XNU/Linux;
   inferred threshold/reset behaviors labeled as inferred; UTXH written
   while the TX FIFO is full or while transmit mode is disabled is refused;
@@ -242,9 +275,12 @@ Not audited (do not read this as "correct"):
   production `unsafe` blocks under `machine/` (notably
   `shared_memory/host.rs`).
 - stela-soc: AIC, PMGR, ANS, DART and all other device models beyond
-  `regfile`/`amcc`. AIC, PMGR, ANS, DART, UART, SMC and SPI are now
-  audited — see above. Still open: the remaining device models (SEP, DCP,
-  AGX, USB, I2C, GPIO, SPMI, and others under `stela-soc/src/`).
+  `regfile`/`amcc`. AIC, PMGR, ANS, DART, UART, SMC, SPI, I2C, GPIO, AGX,
+  USB, DCP, SEP and SPMI are now audited — see above. Still open: the
+  remaining device models under `stela-soc/src/` not named here (e.g.
+  `asc`, `rtkit`, `dwc3`, `mcc`, `nor`, `pmu`, `power`, `sart`, `typec`,
+  `wdt`, `dcs`, `display`, `cluster`, `coresight`, `energy`, `fuse`,
+  `hpm`, `ipi`, `lockdown`, `passive`, `perf`, `ptd`, `scanout`, `wake`).
 
 Three parallel read-only audit agents were started for the three crates and
 all three were cut off by an API rate limit before returning any finding, so
