@@ -490,11 +490,28 @@ pub(super) fn try_to_integer(
     pc: GuestAddress,
     target: TargetCpu,
 ) -> bool {
-    if !to_integer_inline(operand) || !applies(target) {
+    if !to_integer_inline(operand) || !applies_or_fallback(mode, operand, target) {
         return false;
     }
     emit_to(code, operand, mode, pc);
     true
+}
+
+/// Whether the field recipe applies on `target` for `mode`: always where
+/// [`applies`] holds, and on FP16 hosts outside the DIT profile for the two
+/// forms the native path cannot express — ties-away, which has no MXCSR
+/// rounding, and the scalar form, whose native path cannot saturate. The
+/// native packed path keeps the vector forms for the other roundings.
+fn applies_or_fallback(
+    mode: IntegerRounding,
+    operand: &IntegerConversion,
+    target: TargetCpu,
+) -> bool {
+    applies(target)
+        || (!target.data_independent_timing()
+            && vector_extensions::half_supported(target)
+            && (mode == IntegerRounding::NearestAway
+                || operand.integer.shape() == Shape::Scalar))
 }
 
 /// Emit SCVTF/UCVTF `operand` when the field recipe applies on `target`.
