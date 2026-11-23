@@ -139,6 +139,25 @@ Muse audit, 2026-11-23 evening (read-only, no defect found):
   `shared_memory/host.rs` (23); `machine/engine.rs` and `machine/cpu.rs`
   contain none. Individual review of the remaining production `unsafe`
   blocks is still open.
+- `stela-soc/src/wdt.rs` (watchdog): a bite never resets the host — it
+  becomes a `ResetRequest` the engine reports when it stops the guest;
+  the reg[2] deadline mechanism counts system-counter seconds and
+  requests reset when armed and reached; unproved command readback
+  refuses; CoreTrigger bits outside the mask refuse. No defect found in
+  the parts read.
+- `stela-soc/src/asc.rs` (ASC coprocessor wrapper): messages while the
+  coprocessor is stopped are refused; a load of an empty outbox is
+  refused (the hardware underflows); volatile-state reset and retained
+  CPU stop/resume are refused as unmodeled. No defect found in the parts
+  read.
+- `stela-soc/src/rtkit.rs` (RTKit transport): application endpoints
+  start at 0x20; duplicate endpoints refuse; endpoint numbers above 255
+  refuse; every management message other than the modeled
+  `SystemEndpoints` refuses. No defect found in the parts read.
+- `stela-soc/src/mcc.rs` (memory controller): registers outside the
+  aperture or misaligned refuse; paused-by-owner or in-reset resources
+  refuse; observations naming an absent aperture refuse. No defect found
+  in the parts read.
 - `stela-soc/src/i2c.rs` (I2C): invalid/reserved/duplicate target
   addresses refuse; attaching a target during a transfer refuses; power
   off, clock gated or reset asserted refuse; FIFO data without START
@@ -276,11 +295,12 @@ Not audited (do not read this as "correct"):
   `shared_memory/host.rs`).
 - stela-soc: AIC, PMGR, ANS, DART and all other device models beyond
   `regfile`/`amcc`. AIC, PMGR, ANS, DART, UART, SMC, SPI, I2C, GPIO, AGX,
-  USB, DCP, SEP and SPMI are now audited — see above. Still open: the
-  remaining device models under `stela-soc/src/` not named here (e.g.
-  `asc`, `rtkit`, `dwc3`, `mcc`, `nor`, `pmu`, `power`, `sart`, `typec`,
-  `wdt`, `dcs`, `display`, `cluster`, `coresight`, `energy`, `fuse`,
-  `hpm`, `ipi`, `lockdown`, `passive`, `perf`, `ptd`, `scanout`, `wake`).
+  USB, DCP, SEP, SPMI, WDT, ASC, RTKit and MCC are now audited — see
+  above. Still open: the remaining device models under `stela-soc/src/`
+  not named here (notably `dwc3` at 1532 lines, `scanout` at 2888 lines,
+  `nor`, `pmu`, `power`, `sart`, `typec`, `dcs`, `display`, `cluster`,
+  `coresight`, `energy`, `fuse`, `hpm`, `ipi`, `lockdown`, `passive`,
+  `perf`, `ptd`, `wake`).
 
 Three parallel read-only audit agents were started for the three crates and
 all three were cut off by an API rate limit before returning any finding, so
