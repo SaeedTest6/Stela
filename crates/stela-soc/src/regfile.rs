@@ -29,10 +29,15 @@ impl<R> Span<R> {
 
 /// The role of the register at `offset` among `spans`.
 pub fn role<R: Copy>(spans: &[Span<R>], offset: u64, width: Width) -> Result<R> {
-    let span = spans
+    let mut matching = spans
         .iter()
-        .find(|span| (span.start..span.end).contains(&offset))
+        .filter(|span| (span.start..span.end).contains(&offset));
+    let span = matching
+        .next()
         .ok_or(refuse!("register without described meaning"))?;
+    if matching.next().is_some() {
+        return Err(refuse!("overlapping register spans make role ambiguous"));
+    }
     if width != span.width {
         return Err(refuse!("register access of another width"));
     }
@@ -71,6 +76,16 @@ mod tests {
         assert!(role(&SPANS, 0x20, Width::Word).is_err());
         assert!(role(&SPANS, 0x10, Width::Double).is_err());
         assert!(role(&SPANS, 0x104, Width::Word).is_err());
+
+        // A malformed map must not silently pick whichever overlapping span
+        // happens to appear first in the descriptor array.
+        const OVERLAPPING: [Span<u8>; 2] = [
+            Span::new(0x200, 0x210, Width::Word, 3),
+            Span::new(0x208, 0x218, Width::Word, 4),
+        ];
+        assert!(role(&OVERLAPPING, 0x208, Width::Word).is_err());
+        assert!(role(&OVERLAPPING, 0x208, Width::Word).is_err());
+
         let mut held = Held::default();
         assert_eq!(held.get(0x10), 0);
         held.set(0x10, 7);
