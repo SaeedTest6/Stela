@@ -139,6 +139,32 @@ Muse audit, 2026-11-23 evening (read-only, no defect found):
   `shared_memory/host.rs` (23); `machine/engine.rs` and `machine/cpu.rs`
   contain none. Individual review of the remaining production `unsafe`
   blocks is still open.
+- `stela-engine/src/machine/engine/shared_memory/host.rs` (`unsafe`
+  sample, 23 blocks): the `unsafe trait NativeTransport` carries a
+  `# Safety` contract (every submitted frame joined and recovered before
+  return; `hold_all` must consume each owner's `invalidate` receipt
+  including its CPU memory barrier; a missing native return fails
+  stopped without freeing loans); RAM read/publish wrappers carry
+  SAFETY comments (canonical owner supplies mapping and all-reader
+  exclusion; every writer uses the same physical domain; private DMA
+  staging); protocol violations fail stopped (`fail_stopped`), never
+  silently. No defect found in the file as read.
+- `stela-engine/src/machine/engine/board.rs` (`unsafe` sample, 9
+  blocks): `alias()` bounds-checks with `checked_sub` and a length
+  filter and fail-stops (`expect`) outside the arena; `write()` and
+  `patch_point()` carry SAFETY comments (window writable for the board's
+  life; caller owns the bytes / board's lock makes the caller the only
+  writer); patching is one aligned 8-byte atomic store so a running core
+  meets it whole. No defect found in the file as read.
+- `stela-engine/src/machine/engine/shared_memory/native_run/source.rs`
+  and `source/translation.rs` (`unsafe` sample): `unsafe fn first`
+  with loan-based RAM reads/publishes under the same canonical-owner
+  contract; remaining sites in those files are tests. No defect found in
+  the parts read.
+  Unsafe review as scoped is complete: the production hotspots
+  (`chain_control.rs`, `shared_memory/host.rs`, `board.rs`,
+  `native_run/source*.rs`) were read; the remaining production blocks
+  are in files with at most 6 sites each and were not individually read.
 - `stela-soc/src/sart.rs` (SART DMA allow-list): only no-permission and
   the read-write pattern SPTM writes have known semantics — other
   permission bits refuse rather than widening or narrowing access; power
@@ -346,9 +372,10 @@ Not audited (do not read this as "correct"):
   `GuestState`) are now audited — see above. Parallel execution (mailbox
   never under-invalidates) and a sampled `unsafe` review
   (`chain_control.rs`, with the unsafe concentration breakdown) are now
+  audited — see above. The sampled `unsafe` review of the production
+  hotspots (`host.rs`, `board.rs`, `native_run/source*.rs`) is now
   audited — see above. Still open: individual review of the remaining
-  production `unsafe` blocks under `machine/` (notably
-  `shared_memory/host.rs`).
+  production `unsafe` blocks in files with at most 6 sites each.
 - stela-soc: AIC, PMGR, ANS, DART and all other device models beyond
   `regfile`/`amcc`. Every device model under `stela-soc/src/` named in
   this file is now audited — see above. The soc audit as scoped by the
