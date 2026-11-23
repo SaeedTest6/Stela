@@ -108,13 +108,34 @@ Muse audit, 2026-11-23 evening (read-only, no defect found):
   `checked_add` here would only defend against direct in-crate mutation of
   `regions` (as existing tests do), which is not a reachable production
   state. Revisit if `regions` ever stops being sorted/non-overlapping.
-- `stela-engine/src/blocks/validate.rs` (exit validation): every native exit
-  (clock, PAuth, numerical, system, trap, thread-register, AMX) is re-decoded
-  from the registered immutable source, never from artifact descriptors;
-  all address arithmetic in `validate_interior_word` / `validate_terminal_word`
-  uses `checked_add`/`checked_sub` with refusal on overflow, and the
-  numerical continuation is `exit + 4` with an overflow refusal. No defect
-  found in the part read.
+- `stela-engine/src/blocks.rs` `BlockRuntime` (cache invalidation):
+  the dispatch path is generation-checked — a loaded block only runs when
+  `block.generation == current.generation` ("refusing stale block execution"),
+  and same-base `register_code` advances the generation and drops the loaded
+  blocks for that base. The production machine path (`machine/engine/`) has
+  its own invalidation: `code_cache.rs::invalidate_code_page`, called from
+  `device_access.rs` on writes and `native_failure.rs` on faults, plus
+  `boundary.rs::invalidate_translations` / `code_invalidated` (IC IVAU) and
+  the parallel mailbox invalidation in `parallel.rs`. No defect found there
+  in the parts read.
+  FINDING (latent, BlockRuntime only): `BlockRuntime::source_overlaps` —
+  documented as the guard "a permission service must not bypass
+  immutable-source visibility or invalidation by presenting registered code
+  as an ordinary data mapping" — has **zero callers anywhere in the repo**
+  (verified by grep over all `.rs` and `.md` files), and `unregister_code`
+  is called only from tests. `BlockRuntime` itself is used only by
+  `stela-dev`, examples and tests, not by `stela-runtime`'s machine path.
+  Consequence: a `BlockRuntime` consumer that lets the guest write to a
+  registered code region through a data mapping will silently keep executing
+  the old native block — the snapshot never changes and the generation
+  never advances, so the dispatch check cannot see the write. Severity:
+  medium for `BlockRuntime` as a component, low for the product (the real
+  boot path does not use it and has its own invalidation). Fix: either wire
+  `source_overlaps` into the checked-memory permission path of
+  `BlockRuntime` consumers so a data write overlapping registered code is
+  refused or invalidates, or document it as dev-only and delete it; proving
+  test: register code, write through a data mapping overlapping it, then
+  dispatch — expect refusal/invalidation and the new bytes executed.
 - `stela-soc/src/aic.rs` (header/documentation, ~120 lines read): AICv2/v3
   layout, event-register acknowledge-and-mask semantics, die/IRQ vector
   numbering and the AICv3 relocated arrays are documented against Linux
@@ -134,7 +155,10 @@ Not audited (do not read this as "correct"):
   parallel execution, the `unsafe` blocks. Only `execution/checked_memory.rs`
   was skimmed; it is a thin runner and the access checks live in generated
   code and `machine/`. Exit validation (`blocks/validate.rs`) is now
-  audited — see above.
+  audited — see above. Cache invalidation is now partly audited — see the
+  `BlockRuntime` finding above (production `machine/engine` invalidation
+  paths read, `source_overlaps` dead-code finding recorded). Still open:
+  fault recovery, register sync, parallel execution, `unsafe` blocks.
 - stela-soc: AIC, PMGR, ANS, DART and all other device models beyond
   `regfile`/`amcc`. (AIC header documentation now read — see above. Still
   open: AIC register implementation, PMGR, ANS, DART.)
