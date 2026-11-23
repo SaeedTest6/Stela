@@ -19,7 +19,8 @@ use crate::{
     aarch64::{
         Register,
         floating::{
-            FPCR_AH, FPCR_EXCEPTION_ENABLE_MASK, FPCR_FIZ, FPCR_FZ, FPCR_NEP, FPCR_ROUNDING_MASK,
+            FPCR_AH, FPCR_EXCEPTION_ENABLE_MASK, FPCR_FIZ, FPCR_FZ, FPCR_FZ16, FPCR_NEP,
+            FPCR_ROUNDING_MASK,
             FPCR_ROUNDING_SHIFT, Format, INEXACT, INVALID,
             integer::{IntegerFormat, IntegerRounding, IntegerWidth},
         },
@@ -900,10 +901,8 @@ fn to_integer_with(
         None
     } else if signed_single {
         Some(saturating_single(code, operand, mode))
-    } else if operand.format != Format::Half {
-        Some(saturating_packed(code, operand, mode, target))
     } else {
-        None
+        Some(saturating_packed(code, operand, mode, target))
     };
     let saturated = saturated.or_else(|| {
         lanes_supported(operand, target).then(|| saturating_lanes(code, operand, mode))
@@ -1278,6 +1277,35 @@ fn saturating_single(code: &mut Code, operand: &IntegerConversion, mode: Integer
     done
 }
 
+/// Flush subnormal Half lanes in `source` to their sign under FZ16, without
+/// IDC: the reference flushes Half inputs on FZ16 only and raises no
+/// input-denormal status for them. Word lanes: `flush_subnormal_lanes`
+/// classifies dword pairs and would miss a subnormal sharing a dword with
+/// a normal lane. Scratch is [magnitude, exponent, zero, sign-constant],
+/// free at the `saturating_packed` flush point.
+fn flush_half_subnormals(code: &mut Code, source: u8) {
+    const SCRATCH: [u8; 4] = [2, 3, 4, 5];
+    let [magnitude, exponent, zero, constant] = SCRATCH;
+    packed(code, Host::MoveAligned, magnitude, source);
+    ShiftOpcode::LeftWord.emit(code, magnitude, 1);
+    ShiftOpcode::RightWord.emit(code, magnitude, 1);
+    test_control(code, FPCR_FZ16);
+    let kept = branch(code, Condition::Zero);
+    packed(code, Host::MoveAligned, exponent, magnitude);
+    ShiftOpcode::RightWord.emit(code, exponent, Format::Half.fraction_bits() as u8);
+    packed(code, Host::Xor, zero, zero);
+    packed(code, Host::EqualWord, exponent, zero);
+    packed(code, Host::AndNot, exponent, magnitude);
+    packed(code, Host::EqualWord, constant, constant);
+    ShiftOpcode::LeftWord.emit(code, constant, Format::Half.bits() as u8 - 1);
+    packed(code, Host::MoveAligned, magnitude, source);
+    packed(code, Host::And, magnitude, constant);
+    packed(code, Host::Or, magnitude, exponent);
+    packed(code, Host::MoveAligned, source, magnitude);
+    let flushed = code.len();
+    resolve(code, kept, flushed);
+}
+
 /// Vector FCVT{N,M,P,Z}{S,U} of S lanes to unsigned 32-bit integers and of
 /// D lanes to signed or unsigned 64-bit ones (FCVTZS and FCVTZU also with
 /// fixed-point bits) with AVX-512's packed conversions, FPCR.AH and the trap enables clear, for every input: FZ
@@ -1310,6 +1338,16 @@ fn saturating_packed(
             ShiftOpcode::LeftQword,
             ShiftOpcode::RightQword,
         )
+    } else if format == Format::Half {
+        // Half lanes are words: the conversion produces 16-bit integers,
+        // so the indefinite is 0x8000 per word and the NaN test compares
+        // word magnitudes against 0x7C00.
+        (
+            Host::EqualWord,
+            Host::GreaterWord,
+            ShiftOpcode::LeftWord,
+            ShiftOpcode::RightWord,
+        )
     } else {
         (
             Host::EqualDword,
@@ -1324,11 +1362,15 @@ fn saturating_packed(
     let other = branch(code, Condition::NotZero);
     read_numerical_vector(code, shape, operand.float, RESULT_VECTOR);
     code.asm().alu(Alu::Xor, Size::Dword, Gpr::R11, Gpr::R11);
-    test_control(code, FPCR_FZ | FPCR_FIZ);
-    let unflushed = branch(code, Condition::Zero);
-    flush_subnormal_lanes(code, format, shape, RESULT_VECTOR, FLUSH_SCRATCH);
-    let flushed = code.len();
-    resolve(code, unflushed, flushed);
+    if format == Format::Half {
+        flush_half_subnormals(code, RESULT_VECTOR);
+    } else {
+        test_control(code, FPCR_FZ | FPCR_FIZ);
+        let unflushed = branch(code, Condition::Zero);
+        flush_subnormal_lanes(code, format, shape, RESULT_VECTOR, FLUSH_SCRATCH);
+        let flushed = code.len();
+        resolve(code, unflushed, flushed);
+    }
     packed(code, Host::MoveAligned, INPUT, RESULT_VECTOR);
     environment_round(code, rounding(mode));
     scale_dropping_status(code, operand, shape);
@@ -1381,7 +1423,11 @@ fn saturating_packed(
     );
     let end = code.len();
     resolve(code, valid, end);
-    commit_flush_status(code);
+    // Half flushing raises no IDC (see `flush_half_subnormals`); R11D is
+    // already zero on that path, so there is nothing to commit.
+    if format != Format::Half {
+        commit_flush_status(code);
+    }
     let done = jump(code);
     let other_start = code.len();
     resolve(code, other, other_start);
