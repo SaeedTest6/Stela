@@ -84,7 +84,8 @@ mod tests {
             Span::new(0x208, 0x218, Width::Word, 4),
         ];
         assert!(role(&OVERLAPPING, 0x208, Width::Word).is_err());
-        assert!(role(&OVERLAPPING, 0x208, Width::Word).is_err());
+        const OVERLAPPING_REVERSED: [Span<u8>; 2] = [OVERLAPPING[1], OVERLAPPING[0]];
+        assert!(role(&OVERLAPPING_REVERSED, 0x208, Width::Word).is_err());
 
         let mut held = Held::default();
         assert_eq!(held.get(0x10), 0);
