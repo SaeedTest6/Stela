@@ -139,6 +139,32 @@ Muse audit, 2026-11-23 evening (read-only, no defect found):
   `shared_memory/host.rs` (23); `machine/engine.rs` and `machine/cpu.rs`
   contain none. Individual review of the remaining production `unsafe`
   blocks is still open.
+- `stela-soc/src/sart.rs` (SART DMA allow-list): only no-permission and
+  the read-write pattern SPTM writes have known semantics — other
+  permission bits refuse rather than widening or narrowing access; power
+  gated, clock gated or reset asserted refuse; address/size field
+  overflow refuses; 32-bit words only; unmodeled registers refuse. No
+  defect found in the parts read.
+- `stela-soc/src/cluster.rs` (cluster): no known tunable refuses rather
+  than reading an invented one; every other register refuses. No defect
+  found in the parts read.
+- `stela-soc/src/coresight.rs` (CoreSight): accesses with undescribed
+  widths or directions still refuse. No defect found in the parts read.
+- `stela-soc/src/lockdown.rs` (lockdown): registers without a public
+  description refuse; accesses narrower than 64 bits refuse; a PE block
+  without its legacy lockdown pair refuses. No defect found in the parts
+  read.
+- `stela-soc/src/perf.rs` (performance counters): duplicate PMGR counter
+  selectors refuse; class-1 busy status and control fields without
+  described effects refuse. No defect found in the parts read.
+- `stela-soc/src/display.rs` (display resources): a present-but-unmodeled
+  register aperture refuses every access by name; empty or overflowing
+  physical views refuse. No defect found in the parts read.
+- `stela-soc/src/hpm.rs`, `energy.rs`, `passive.rs` (sampled): the same
+  refusal discipline throughout (`hpm` 32, `energy` 5, `passive` 1
+  refusal sites). No defect found in the parts read.
+- `stela-soc/src/dcs.rs` and `ptd.rs` are module indexes only (DCS
+  channels live in `mcc`/`native`; PTD transport in `ptd::transport`).
 - `stela-soc/src/dwc3.rs` (DWC3 USB2 device core): disabled-device
   handoff with four masked empty event buffers; full event rings
   backpressure without overwriting entries; event DMA addresses use
@@ -324,12 +350,18 @@ Not audited (do not read this as "correct"):
   production `unsafe` blocks under `machine/` (notably
   `shared_memory/host.rs`).
 - stela-soc: AIC, PMGR, ANS, DART and all other device models beyond
-  `regfile`/`amcc`. AIC, PMGR, ANS, DART, UART, SMC, SPI, I2C, GPIO, AGX,
-  USB, DCP, SEP, SPMI, WDT, ASC, RTKit, MCC, DWC3, scanout, fuse, typec,
-  wake, IPI, NOR, PMU and power are now audited — see above. Still open:
-  the remaining device models under `stela-soc/src/` not named here
-  (`sart`, `dcs`, `display`, `cluster`, `coresight`, `energy`, `hpm`,
-  `lockdown`, `passive`, `perf`, `ptd`).
+  `regfile`/`amcc`. Every device model under `stela-soc/src/` named in
+  this file is now audited — see above. The soc audit as scoped by the
+  mission is complete: AIC, PMGR, ANS, DART, UART, SMC, SPI, I2C, GPIO,
+  AGX, USB, DCP, SEP, SPMI, WDT, ASC, RTKit, MCC, DWC3, scanout, fuse,
+  typec, wake, IPI, NOR, PMU, power, SART, cluster, CoreSight, lockdown,
+  perf, display, HPM, energy, passive, and the DCS/PTD module indexes.
+  Depth varies: headers + read/write paths for the named controllers,
+  sampled refusal-discipline checks for the smaller models. What was not
+  audited at this depth: the submodules inside the big models (e.g.
+  `agx/*`, `ans/*`, `dcp/*`, `sep/*`, `dwc3/xhci`, `usb/*`) beyond the
+  files named above, and the machine wiring in `machine/` (buses,
+  canonical reads/writes, memory resources, power sequencing).
 
 Three parallel read-only audit agents were started for the three crates and
 all three were cut off by an API rate limit before returning any finding, so
