@@ -1,0 +1,69 @@
+---
+# What the development branch must pass: the unit tests of the three
+# audited crates and their contracts/data dependencies. The main `ci`
+# workflow only tests stela-cli, so these suites had no CI coverage.
+name: crate-tests
+
+on:
+  push:
+    branches: [development/compiler-engine-soc]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crate-tests-${{ github.ref }}
+  # Every commit on the branch keeps its result; a pull request keeps its newest.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # No later step pushes, and a pull request's code runs here.
+          persist-credentials: false
+
+      - name: Put LLVM on PATH
+        run: |
+          # As in the `ci` workflow: the C build passes --no-default-config,
+          # which Clang 16 and newer take; Linux uses the LLVM 21 the boot
+          # program builds with.
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          release="$(lsb_release -cs)"
+          echo "deb http://apt.llvm.org/$release/ llvm-toolchain-$release-21 main" | sudo tee /etc/apt/sources.list.d/llvm-21.list
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends clang-21 llvm-21
+          echo /usr/lib/llvm-21/bin >> "$GITHUB_PATH"
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.rustup/toolchains
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-crate-tests-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: cargo-crate-tests-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install
+          rustc --version
+          clang --version | head -1
+
+      - name: Test
+        run: cargo test --locked -p stela-contracts -p stela-soc-data -p stela-soc -p stela-compiler -p stela-engine
+---
