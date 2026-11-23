@@ -21,6 +21,15 @@ was changed for it. Results below are 1.97 results, not 1.99.1 results.
 `cargo clippy` and `cargo fmt --check` for the whole workspace were not run;
 `cargo fmt -p stela-soc -- --check` was clean after the change below.
 
+Muse audit (2026-11-23 evening, continuing from `6ac8b29`): no Rust toolchain
+is installed on the Muse VM at all, and the local clone must not be built or
+run there (execution-risk check on the cloned content). Muse therefore audited
+by reading code only and did not run any test locally. Validation of any future
+change must come from GitHub CI. Note: `.github/workflows/ci.yml` triggers on
+push to `main`, pull requests and `workflow_dispatch` only — a push to this
+development branch alone runs no CI. To get CI results for a change on this
+branch, open a PR against `main` (do not merge it) or dispatch the workflow.
+
 ## Baseline (before this session's code change)
 
 | Crate | Result |
@@ -62,16 +71,73 @@ Read in full or in the relevant part, no defect found:
   sf=0, ROR in add/sub, 32-bit shift amount >= 32, N=1 for W32 logical
   immediates, unprivileged forms, PRFM) are refused. No defect found.
 
+Muse audit, 2026-11-23 evening (read-only, no defect found):
+
+- `stela-compiler/src/aarch64/flags.rs` + `src/x86_64/flags.rs`
+  (NZCV condition evaluation, FlagM/FlagM2 CFINV/RMIF/SETF8/16, AXFLAG/XAFLAG,
+  MRS/MSR NZCV): `condition_holds` matches the architectural truth table for
+  all 16 conditions x 16 NZCV nibbles (test
+  `every_condition_matches_the_architectural_truth_table`); the AXFLAG/XAFLAG
+  conversion tables are checked against all flag inputs
+  (`external_table_matches_all_architectural_flag_inputs`); MRS/MSR NZCV
+  complete inline in both SYSTEM_MODE and ORDINARY profiles
+  (`nzcv_reads_and_writes_complete_inline_in_every_profile`). No defect found.
+- `stela-compiler` integer division (`aarch64/integer_math.rs` decode +
+  `x86_64/integer_math/division_remainder_tests.rs`): SDIV/UDIV decode is
+  exact (reserved neighbours never decode as another divide); the
+  divide+MSUB grouping refuses aliased inputs and unmatched rows; the
+  state-comparison tests cover divisor 0 (quotient 0, remainder = dividend),
+  INT_MIN / -1 and 32/64-bit signed/unsigned forms, including independent
+  entry at the MSUB row and pinned/system-mode recovery placement. The x86
+  IDIV trap cases are therefore guarded by construction and by test.
+  No defect found.
+- `stela-contracts/src/bus.rs` + `bus/container.rs`, unchecked adds
+  (follow-up to the note above, proof): `route()` computes
+  `region.device_offset + (address - region.start)` and `shared_view()`
+  computes `region.device_offset + (cursor - region.start)` without
+  `checked_add`. Both are provably non-overflowing for every state reachable
+  through the public API: `regions` is documented and maintained sorted by
+  `start` and non-overlapping (`install_many` sorts; `map` inserts at the
+  `partition_point`); `install`/`map` both reject with `MapError::Overflow`
+  unless `device_offset + len` fits, where `len = region.end - region.start`;
+  in `route()` the address lies inside one region, so the delta is `< len`;
+  in `shared_view()` the cursor only ever equals a region's start (later
+  regions) or lies inside the first overlapping region with
+  `cursor - region.start < len` (earlier regions cannot overlap it). The
+  sums are therefore `<= device_offset + len`. No change made; a
+  `checked_add` here would only defend against direct in-crate mutation of
+  `regions` (as existing tests do), which is not a reachable production
+  state. Revisit if `regions` ever stops being sorted/non-overlapping.
+- `stela-engine/src/blocks/validate.rs` (exit validation): every native exit
+  (clock, PAuth, numerical, system, trap, thread-register, AMX) is re-decoded
+  from the registered immutable source, never from artifact descriptors;
+  all address arithmetic in `validate_interior_word` / `validate_terminal_word`
+  uses `checked_add`/`checked_sub` with refusal on overflow, and the
+  numerical continuation is `exit + 4` with an overflow refusal. No defect
+  found in the part read.
+- `stela-soc/src/aic.rs` (header/documentation, ~120 lines read): AICv2/v3
+  layout, event-register acknowledge-and-mask semantics, die/IRQ vector
+  numbering and the AICv3 relocated arrays are documented against Linux
+  `irq-apple-aic.c`, m1n1 `aic.c` and 26A434 kernelcache drivers, with
+  inferred (undocumented) behaviour explicitly labelled as inferred and
+  cross-die arbitration stated as a deterministic permitted ordering, not a
+  documented contract. No defect found in the part read; the register
+  implementation below the header was not audited.
+
 Not audited (do not read this as "correct"):
 
 - Everything else in stela-compiler: flags/condition mapping in x86_64
-  codegen, division, SIMD/FP, atomics, AMX/SME/SVE.
+  codegen, division, SIMD/FP, atomics, AMX/SME/SVE. (Flags decode, NZCV
+  codegen and division are now audited — see above. Still open: SIMD/FP
+  codegen, atomics, AMX/SME/SVE, and the lazy-flags / resident-loop paths.)
 - stela-engine: code cache invalidation, fault recovery, register sync,
   parallel execution, the `unsafe` blocks. Only `execution/checked_memory.rs`
   was skimmed; it is a thin runner and the access checks live in generated
-  code and `machine/`.
+  code and `machine/`. Exit validation (`blocks/validate.rs`) is now
+  audited — see above.
 - stela-soc: AIC, PMGR, ANS, DART and all other device models beyond
-  `regfile`/`amcc`.
+  `regfile`/`amcc`. (AIC header documentation now read — see above. Still
+  open: AIC register implementation, PMGR, ANS, DART.)
 
 Three parallel read-only audit agents were started for the three crates and
 all three were cut off by an API rate limit before returning any finding, so
@@ -83,6 +149,10 @@ no agent findings exist and none are recorded here.
 - Environment: a 1.99.1 toolchain is needed to reproduce CI results exactly.
 - Targeted audits listed under "Not audited", each with a failing test before
   any fix.
+- Coordination: Muse and Claude have both worked this branch on 2026-11-23.
+  Before pushing anything, confirm who is active; HEAD was `6ac8b29` when
+  Muse's audit started and was unchanged when re-checked the same evening.
+  A push to this branch runs no CI by itself (see Environment note).
 
 ## Decisions
 
