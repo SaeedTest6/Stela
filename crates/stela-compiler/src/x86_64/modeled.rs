@@ -560,10 +560,10 @@ mod half {
     }
 
     /// One lane of `left` * `right` + `addend`, each sign changed first as the
-    /// form says and the exact sum rounded once. Infinity times zero is
-    /// invalid even with a NaN addend; otherwise the result of NaN operands is
-    /// the first NaN of `left`, `right` and `addend`, quiet with its sign
-    /// unchanged.
+    /// form says and the exact sum rounded once. A NaN operand takes
+    /// precedence: the result of NaN operands is the first NaN of `left`,
+    /// `right` and `addend`, quiet with its sign unchanged. Infinity times
+    /// zero is invalid only when no operand is a NaN.
     pub(super) fn fused(
         [left, addend, right]: [u16; 3],
         [negate_product, negate_addend]: [bool; 2],
@@ -571,7 +571,10 @@ mod half {
     ) -> (u16, u32) {
         let invalid = (INDEFINITE, INVALID);
         let (x, y) = (value(left), value(right));
-        if !nan(left) && !nan(right) && (x == 0.0 && y.is_infinite() || x.is_infinite() && y == 0.0)
+        if !nan(left)
+            && !nan(right)
+            && !nan(addend)
+            && (x == 0.0 && y.is_infinite() || x.is_infinite() && y == 0.0)
         {
             return invalid;
         }
