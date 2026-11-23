@@ -118,6 +118,27 @@ Muse audit, 2026-11-23 evening (read-only, no defect found):
   IRQ the model does not have are refused; event reads claim and mask the
   IRQ and refuse CPUs the AIC does not serve. No defect found in the parts
   read (construction, `read_register`, `write_register`, `check_lifecycle`).
+- `stela-engine/src/machine/engine/parallel.rs` (parallel invalidation
+  mailbox): bounded memory (~15 KiB per PE); code-page lists collapse to
+  one whole invalidation past `MAIL_SCOPES`; TLB scopes merge only into
+  wider scopes, and a scope that merges with none of the last `MAIL_NEAR`
+  becomes a whole invalidation — every kept scope removes at least what
+  the TLBIs it stands for remove, so the mailbox never under-invalidates;
+  ASID handling keeps a named ASID on merge until the mailbox is full, at
+  which point the wider invalidation is still safe because it removes
+  more, not less. No defect found in the part read.
+- `stela-engine/src/machine/engine/chain_control.rs` (`unsafe` sample):
+  every `unsafe` block carries a SAFETY comment stating its contract —
+  `Storage` is `Send`/`Sync` only because shared access is limited to
+  aligned atomic epoch fields, all other fields go through the unique
+  `Owner` (enforced `!Sync` by `PhantomData<Cell<()>>`), and `notify()`
+  saturates the epoch instead of wrapping. No defect found in the file as
+  read. Unsafe concentration for the record: of 272 `unsafe {` blocks
+  under `stela-engine/src/machine/`, the largest groups are test files
+  (36 + 27 + 22), then `chain_control.rs` (30) and
+  `shared_memory/host.rs` (23); `machine/engine.rs` and `machine/cpu.rs`
+  contain none. Individual review of the remaining production `unsafe`
+  blocks is still open.
 - `stela-soc/src/pmgr.rs` (PMGR power states): writes refuse reserved
   fields, RESET or DEV_DISABLE without a connected lifecycle, reset
   unless the domain is active and quiesced, and power changes while reset
@@ -200,8 +221,12 @@ Not audited (do not read this as "correct"):
   `BlockRuntime` finding above (production `machine/engine` invalidation
   paths read, `source_overlaps` dead-code finding recorded). Fault recovery
   (`native_failure.rs` variant learning) and register sync (shared
-  `GuestState`) are now audited — see above. Still open: parallel
-  execution, and the 272 `unsafe` blocks under `machine/` individually.
+  `GuestState`) are now audited — see above. Parallel execution (mailbox
+  never under-invalidates) and a sampled `unsafe` review
+  (`chain_control.rs`, with the unsafe concentration breakdown) are now
+  audited — see above. Still open: individual review of the remaining
+  production `unsafe` blocks under `machine/` (notably
+  `shared_memory/host.rs`).
 - stela-soc: AIC, PMGR, ANS, DART and all other device models beyond
   `regfile`/`amcc`. AIC, PMGR, ANS and DART are now audited — see above.
   Still open: the remaining device models (SEP, DCP, AGX, UART, USB, SMC,
