@@ -248,6 +248,38 @@ Open question for the owner: if the goal is for the native path to complete
 these lanes too (a performance goal, priority 4), it needs a tininess-before-
 rounding proof for exponent-1 results and an AH model for the packed path.
 
+## CI run #6: stela-compiler green, first stela-engine baseline (2026-11-24, Claude)
+
+Run https://github.com/SaeedTest6/Stela/actions/runs/45384424636 (commit
+`45c46ce`): **stela-compiler 1570 passed, 0 failed, 20 ignored** — the
+compiler is green on 1.99.1 for the first time. stela-contracts 65 passed.
+**stela-engine, first ever baseline: 1945 passed, 2 failed, 35 ignored.**
+(stela-soc-data and stela-soc come before the compiler in the job and
+passed in run #1; not re-listed by cargo's failure output here.)
+
+The two engine failures, `fused_native::half_fma_forms_aliases_rounding_controls_and_host_environment`
+and `half_fma_last_lane_rollback_and_enabled_exceptions_preserve_state`,
+reproduce in 2 s locally. Bisected with the compiler sources of earlier
+commits: they pass at `9b79d88`, fail from `c120df4`. Cause: `run_native`
+(shared by arithmetic and FMA) now accepts a signed-zero result, so an exact
+FMA cancellation (1 + (-1)*1) completes inline on the AVX512-FP16 target.
+The engine test's integer reference still called it outside the native
+domain. Neither is a wrong result; the engine's independent oracle was
+simply narrower than the code.
+
+Fix (test only): the reference models the cancellation on the native target
+(+0, or -0 under round-toward-minus-infinity) so the completed value, FPSR and
+caller MXCSR are checked, and the rollback test uses a below-minimum-exponent
+last lane on the native target to force the helper exit. The bounded-span
+targets keep the old expectations. stela-engine locally: 1947 passed, 0 failed.
+
+Caveat for review: c120df4 widened a shared native guard and its only oracle
+for FMA zero results is now this test's reference, written in the same
+session. FMA with a **zero input** still exits (asserted by the unchanged
+`bad in [0, 0x8000, ...]` loop). Independent hardware evidence for the FMA
+exact-zero sign rule is IEEE 754-2019 6.3 and Arm's FPMulAdd; nothing in the
+repository measures it on real Apple silicon.
+
 ## Baseline (before this session's code change)
 
 | Crate | Result |
