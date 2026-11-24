@@ -10,7 +10,7 @@ use crate::{
         integer::{IntegerFormat, IntegerRounding, IntegerWidth, from_integer, to_integer},
     },
     block::{BlockProfile, CompilationPlan},
-    x86_64::native::run,
+    x86_64::{asm::vector_extensions::half_supported, native::run},
 };
 use alloc::vec::Vec;
 
@@ -144,8 +144,20 @@ fn check(
     true
 }
 
+/// Whether `lanes` of a conversion to integer take the AVX512-FP16 packed
+/// path on `target` under `fpcr`, which hands FPCR.AH to the helper: AH changes
+/// how denormal inputs are flushed and reported, and the host conversion cannot
+/// reproduce that. The field recipes of every other target (and the ties-away
+/// and scalar forms, which use them on FP16 hosts) complete under AH, so only
+/// these forms are excused from the coverage requirement. Their results and
+/// exits are still checked against the reference.
+fn native_declines_ah(target: TargetCpu, native_forms: bool, lanes: usize, fpcr: u32) -> bool {
+    native_forms && lanes > 1 && fpcr & FPCR_AH != 0 && half_supported(target)
+}
+
 fn run_forms(
     bases: [(u32, bool); 2],
+    native_forms: bool,
     covered: &dyn Fn(bool, u16, u32) -> bool,
     reference: &dyn Fn(IntegerFormat, u32, u64) -> Option<(u64, u32)>,
 ) {
@@ -187,7 +199,9 @@ fn run_forms(
                                 .take(lanes)
                                 .all(|&bits| covered(signed, bits, fpcr));
                             assert!(
-                                completed || !must,
+                                completed
+                                    || !must
+                                    || native_declines_ah(target, native_forms, lanes, fpcr),
                                 "covered input exited: {word:08x} {inputs:x?} {fpcr:#x} {target:?}"
                             );
                             inline += usize::from(completed);
@@ -211,6 +225,7 @@ fn half_to_integer_fields(mode: IntegerRounding, signed_base: u32) {
     };
     run_forms(
         [(signed_base, true), (signed_base | 1 << 29, false)],
+        mode != IntegerRounding::NearestAway,
         &|_, _, fpcr| fpcr & FPCR_EXCEPTION_ENABLE_MASK == 0,
         &reference,
     );
@@ -251,6 +266,7 @@ fn half_from_integer_fields_match_the_reference() {
     // SCVTF, UCVTF.
     run_forms(
         [(0x0e79_d800, true), (0x2e79_d800, false)],
+        false,
         &|signed, bits, fpcr| {
             let magnitude = if signed {
                 i32::from(bits as i16).unsigned_abs()
