@@ -150,7 +150,15 @@ fn exact_lane(
     let exact = signed(a, operation.negate_addend()) * addend
         + signed(n, operation.negate_left()) * signed(m, false) * product;
     if exact == 0 {
-        return None;
+        // The bounded-span recipes send exact cancellation to the helper. The
+        // AVX512-FP16 native path completes it since c120df4 (its result guard
+        // accepts a signed zero): +0, or -0 when rounding toward minus
+        // infinity (Arm FPMulAdd, IEEE 754-2019 6.3).
+        if bounded_span {
+            return None;
+        }
+        let negative = (fpcr >> FPCR_ROUNDING_SHIFT) & 3 == 2;
+        return Some((u64::from(negative) << 15, 0));
     }
     let magnitude = exact.unsigned_abs();
     let leading = 127 - magnitude.leading_zeros();
@@ -413,22 +421,40 @@ fn half_fma_last_lane_rollback_and_enabled_exceptions_preserve_state() {
             }
             if operand.shape != Shape::Scalar {
                 let mut state = input(&operand, [0x1001, 0x4001, 0x4201], 0);
-                // Last output cancels after prior inexact lanes staged pending IXC.
+                // The last output takes the helper after prior inexact lanes
+                // staged pending IXC. Exact cancellation does that on the
+                // bounded-span recipes; on the AVX512-FP16 native path, which
+                // completes it since c120df4, a result below the minimum
+                // exponent does (2^-14 * (1 + 2^-10) - 2^-14 = 2^-24).
                 let lane = operand.shape.lane_count(Format::Half) - 1;
-                write_lane(&mut state.v[usize::from(operand.addend)], 16, lane, 0xbc00);
-                write_lane(&mut state.v[usize::from(operand.left)], 16, lane, 0x3c00);
+                let native = !mapping.bounded_span;
+                let (last_addend, last_left, last_right) = match (native, operand.operation) {
+                    (false, FusedOperation::Subtract) => (0x3c00, 0x3c00, 0x3c00),
+                    (false, _) => (0xbc00, 0x3c00, 0x3c00),
+                    (true, FusedOperation::Subtract) => (0x0401, 0x0400, 0x3c00),
+                    (true, _) => (0x0401, 0x0400, 0xbc00),
+                };
+                write_lane(
+                    &mut state.v[usize::from(operand.addend)],
+                    16,
+                    lane,
+                    last_addend,
+                );
+                write_lane(&mut state.v[usize::from(operand.left)], 16, lane, last_left);
                 if let Some(index) = operand.right_lane {
                     write_lane(
                         &mut state.v[usize::from(operand.right)],
                         16,
                         u32::from(index),
-                        0x3c00,
+                        last_right,
                     );
                 } else {
-                    write_lane(&mut state.v[usize::from(operand.right)], 16, lane, 0x3c00);
-                }
-                if operand.operation == FusedOperation::Subtract {
-                    write_lane(&mut state.v[usize::from(operand.addend)], 16, lane, 0x3c00);
+                    write_lane(
+                        &mut state.v[usize::from(operand.right)],
+                        16,
+                        lane,
+                        last_right,
+                    );
                 }
                 let a = read_lane(&state.v[usize::from(operand.addend)], 16, 0);
                 let n = read_lane(&state.v[usize::from(operand.left)], 16, 0);
