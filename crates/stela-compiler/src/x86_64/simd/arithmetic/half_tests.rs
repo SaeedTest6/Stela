@@ -11,7 +11,7 @@ use crate::{
         FPCR_ROUNDING_SHIFT, Format, INEXACT, OVERFLOW, UNDERFLOW, evaluate,
     },
     block::{BlockProfile, CompilationPlan},
-    x86_64::native::run,
+    x86_64::{asm::vector_extensions::half_supported, native::run},
 };
 use alloc::vec::Vec;
 
@@ -98,6 +98,7 @@ fn half_arithmetic_lanes_match_the_reference() {
         for &(base, operation, lanes) in FORMS {
             let word = base | M << 16 | N << 5 | D;
             let code = compile(word, target);
+            let native = half_supported(target);
             for case in 0..6000 {
                 let inputs: Vec<(u64, u64)> = (0..lanes)
                     .map(|_| (half(&mut random), half(&mut random)))
@@ -143,10 +144,15 @@ fn half_arithmetic_lanes_match_the_reference() {
                                     let zero = |bits: u64| bits & 0x7fff == 0;
                                     let finite = |bits| normal(bits) || zero(bits);
                                     // Vector lanes with a zero input and no zero divisor.
+                                    // The AVX512-FP16 native path also sends a result
+                                    // whose exponent field is the minimum (it cannot
+                                    // tell exact from underflowing there) to the helper.
+                                    let native_floor = native && !zero(bits) && bits >> 10 & 31 < 2;
                                     let zero_lane = lanes > 1
                                         && (zero(left) || zero(right))
                                         && finite(left)
                                         && finite(right)
+                                        && !native_floor
                                         && !(operation == BinaryOperation::Divide && zero(right));
                                     // Overflow and underflow take the helper.
                                     zero_lane
