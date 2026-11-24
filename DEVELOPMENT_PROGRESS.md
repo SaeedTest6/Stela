@@ -211,6 +211,43 @@ still guards the native operation. Proving test:
 https://github.com/SaeedTest6/Stela/actions/runs/45256689749 —
 pending at push time; a watch cron checks it every 20 minutes.
 
+## CI run #5 and the last five FP16 failures (2026-11-24, Claude)
+
+Run https://github.com/SaeedTest6/Stela/actions/runs/45259148194 (commit
+`acd27ce`): stela-compiler 1565 passed, **5 failed**, 20 ignored. The sandbox
+CPU also has AVX512-FP16, so the failures reproduce locally in about 15 s per
+test (Rust 1.97, `--ignore-rust-version`); that replaces the 12-minute CI loop
+for this class of failure.
+
+Neither is a wrong result. Both are coverage assertions ("must complete
+inline") that the AVX512-FP16 native path declines by design; a decline exits
+to the helper with the state unchanged, which the same tests still assert.
+
+1. `half_arithmetic_lanes_match_the_reference`: `4e451483` (FADD .8H), fpcr
+   0, lane `(8703, 8000)` = minimum-normal + (-0). The test's `zero_lane` rule
+   required it to complete; the native result guard sends any non-zero result
+   with exponent field 1 to the helper because it cannot separate an exact
+   minimum-normal result from an underflow (Arm detects tininess before
+   rounding, x86 after). Fix `b545c6f`: on `half_supported` targets only, a
+   zero lane whose result has exponent field 1 is not required to complete.
+2. The four `half_to_integer_*` tests (`0ef9b883`, `0e79a883`, `0e79b883`,
+   `0ef9a883`), fpcr `0x2` (FPCR.AH), inputs `[0..7]`: the packed native path
+   guards on `EXCEPTION_ENABLE_MASK | FPCR_AH` and hands AH to the helper. They
+   first failed at fpcr 0 (fixed by `acd27ce`), which hid this second
+   condition. Fix `1948d5a`: AH-set vector lanes are excused on native
+   targets only, for every rounding except ties-away (which uses the field
+   recipe on FP16 hosts) and not for SCVTF/UCVTF.
+
+No codegen was changed. All 11 FP16 tests (arithmetic, to/from integer,
+ties-away, even, +inf, -inf, other forms) pass locally. These two commits
+narrow test requirements, so they are listed here explicitly: the narrowing is
+limited to the native targets and the exact lanes above, and every completed
+lane is still compared with the reference in value and FPSR.
+
+Open question for the owner: if the goal is for the native path to complete
+these lanes too (a performance goal, priority 4), it needs a tininess-before-
+rounding proof for exponent-1 results and an AH model for the packed path.
+
 ## Baseline (before this session's code change)
 
 | Crate | Result |
