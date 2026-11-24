@@ -280,6 +280,22 @@ session. FMA with a **zero input** still exits (asserted by the unchanged
 exact-zero sign rule is IEEE 754-2019 6.3 and Arm's FPMulAdd; nothing in the
 repository measures it on real Apple silicon.
 
+## CI run #7: all five crates green on 1.99.1 (2026-11-24, commit `1ae3479`)
+
+Run https://github.com/SaeedTest6/Stela/actions/runs/45388876746, conclusion
+**success**, 27m 6s (pinned Rust 1.99.1, ubuntu-24.04, `crate-tests`):
+
+| Crate | Result |
+| --- | --- |
+| stela-compiler | 1570 passed, 0 failed, 20 ignored |
+| stela-contracts | 65 passed, 0 failed |
+| stela-engine | 1947 passed, 0 failed, 35 ignored (+ integration/doc: 32, 4, 17, 6, 2, 2, 6, 7 passed) |
+| stela-soc | 1620 passed, 0 failed, 79 ignored |
+| stela-soc-data | 184 passed, 0 failed, 23 ignored |
+
+This is the first fully green baseline of the development branch. Ignored
+tests were not changed by this session.
+
 ## Baseline (before this session's code change)
 
 | Crate | Result |
@@ -646,10 +662,7 @@ no agent findings exist and none are recorded here.
 
 ## Open items
 
-- Diagnose the 7 failing stela-compiler tests from CI baseline run #1
-  (EVEX model mismatch + 6 half-precision SIMD reference failures) and fix
-  them; stela-engine still has no baseline (its tests never ran — blocked
-  behind the compiler failure).
+- Done: the 7 compiler failures (run #1) and the 2 engine failures (run #6) are fixed; see runs #2-#7 above. CI is green.
 - Environment: a 1.99.1 toolchain is needed to reproduce CI results exactly.
 - Targeted audits listed under "Not audited", each with a failing test before
   any fix.
