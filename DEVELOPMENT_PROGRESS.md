@@ -280,6 +280,28 @@ session. FMA with a **zero input** still exits (asserted by the unchanged
 exact-zero sign rule is IEEE 754-2019 6.3 and Arm's FPMulAdd; nothing in the
 repository measures it on real Apple silicon.
 
+## Atomics audit (2026-11-24, Claude) — no defect found
+
+- `aarch64/atomic.rs` decode checked bit by bit against the Arm encodings:
+  CAS (`size 001000 1 L 1 Rs o0 11111`), CASP (even Rs/Rt, 31 refused),
+  LDADD-family `o3:opc` (reserved values and LD64B/LDAPR refused), and
+  exclusive/ordered classes do not overlap. Correct.
+- Acquire suppression when the returned register is ZR, **including CAS
+  (`acquire = L == 1 && Rs != 31`)**, matches the current Arm ARM text for
+  CAS/CASA/CASAL (https://www.scs.stanford.edu/~zyedidia/arm64/cas.html). An
+  early suspicion that CAS had no ZR rule was wrong and was dropped.
+- `x86_64/atomic/read_modify_write.rs`: min/max select (`cmp old,src` then
+  CMOV L/G/B/A moves the operand when it wins), NOT for LDCLR, XCHG/XADD for
+  SWP/ADD, retry loop and narrow-width zero-extension reasoned through. No
+  defect.
+- New executed coverage `42ddf59`'s successor (see log): a model-based test of
+  all nine RMW operations at all widths on sign/carry-boundary values, and of
+  CAS width handling. Both pass.
+
+Not covered by this: the non-shared (private memory) lowering is exercised
+through the same instruction words but not with this value matrix; CASP and
+the DIT plain-access lowering have only the existing tests.
+
 ## CI run #7: all five crates green on 1.99.1 (2026-11-24, commit `1ae3479`)
 
 Run https://github.com/SaeedTest6/Stela/actions/runs/45388876746, conclusion
