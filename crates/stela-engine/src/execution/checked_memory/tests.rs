@@ -1032,6 +1032,138 @@ fn native_shared_scalar_lse_matrix_preserves_complete_state_and_neighbors() {
     assert_eq!(registers, expected);
     assert_eq!(before.x[0], 5);
 }
+/// The memory a `bytes`-wide LDADD-family `operation` (the `opc` field with
+/// SWP as 8) leaves behind, from Arm's pseudocode: operands are taken at the
+/// access width, the signed and unsigned maxima and minima compare there, and
+/// the result is truncated to it.
+fn lse_model(operation: u32, bytes: usize, old: u64, source: u64) -> u64 {
+    let mask = u64::MAX >> ((8 - bytes) * 8);
+    let (old, source) = (old & mask, source & mask);
+    let shift = 64 - 8 * bytes as u32;
+    let signed = |value: u64| ((value << shift) as i64) >> shift;
+    let new = match operation {
+        0 => old.wrapping_add(source),
+        1 => old & !source,
+        2 => old ^ source,
+        3 => old | source,
+        4 => {
+            if signed(source) > signed(old) {
+                source
+            } else {
+                old
+            }
+        }
+        5 => {
+            if signed(source) < signed(old) {
+                source
+            } else {
+                old
+            }
+        }
+        6 => old.max(source),
+        7 => old.min(source),
+        8 => source,
+        _ => unreachable!(),
+    };
+    new & mask
+}
+#[test]
+fn native_shared_scalar_lse_matches_the_model_at_every_width_sign_boundary() {
+    // The matrix above uses one old/source pair. Here every operation at every
+    // width runs on values straddling that width's sign and carry boundaries,
+    // with garbage above the access width in the source register and in the
+    // memory neighbors: only the low `bytes` of each may matter.
+    const SENTINEL: u64 = 0xa5a5_a5a5_a5a5_a5a5;
+    let domain = domain();
+    let mut worker = Worker::qualified(&domain, 2, 2, false);
+    for size in 0..4 {
+        let bytes = 1usize << size;
+        let mask = u64::MAX >> ((8 - bytes) * 8);
+        let mut values = vec![
+            0,
+            1,
+            2,
+            mask >> 1,
+            (mask >> 1) + 1,
+            (mask >> 1) + 2,
+            mask - 1,
+            mask,
+            0x80 & mask,
+            0x7f,
+        ];
+        values.sort_unstable();
+        values.dedup();
+        for operation in 0..9 {
+            for destination in [2, 31] {
+                let word = rmw_word(size, operation, 0, destination);
+                let code = block(&[word, RET]);
+                for &old in &values {
+                    for &source in &values {
+                        write(&mut worker, DATA, old | (SENTINEL & !mask));
+                        let before = worker.snapshot();
+                        let mut registers = state(ALIAS);
+                        registers.x[1] = source | (SENTINEL & !mask);
+                        let mut expected = registers.clone();
+                        if destination != 31 {
+                            expected.x[2] = old;
+                        }
+                        let observed = worker.run(&code, &mut registers).unwrap();
+                        let context = format!(
+                            "word={word:08x} bytes={bytes} old={old:#x} source={source:#x}"
+                        );
+                        assert!(observed.fault.is_none(), "{context}");
+                        assert_eq!(registers, expected, "{context}");
+                        let mut memory = before;
+                        let new = lse_model(operation, bytes, old, source);
+                        memory[..bytes].copy_from_slice(&new.to_le_bytes()[..bytes]);
+                        assert_eq!(worker.snapshot(), memory, "{context}");
+                    }
+                }
+            }
+        }
+    }
+}
+#[test]
+fn native_shared_cas_compares_and_stores_only_the_access_width() {
+    // Garbage above the access width in the compare and source registers and in
+    // the memory neighbors must change neither the comparison nor the store;
+    // the old value returns zero-extended in the compare register either way.
+    const SENTINEL: u64 = 0xa5a5_a5a5_a5a5_a5a5;
+    let domain = domain();
+    let mut worker = Worker::qualified(&domain, 2, 2, false);
+    for size in 0..4 {
+        let bytes = 1usize << size;
+        let mask = u64::MAX >> ((8 - bytes) * 8);
+        let word = 0x08a0_7c02 | (size << 30) | (1 << 16);
+        let code = block(&[word, RET]);
+        let old = (mask >> 1) + 1;
+        for (compare, matched) in [
+            (old, true),
+            (old ^ 1, false),
+            (old ^ (mask >> 1), false),
+            (old.wrapping_sub(1) & mask, false),
+        ] {
+            for upper in [0, SENTINEL, !0] {
+                write(&mut worker, DATA, old | (SENTINEL & !mask));
+                let before = worker.snapshot();
+                let mut registers = state(DATA);
+                registers.x[1] = compare | (upper & !mask);
+                registers.x[2] = 0x55 | (upper & !mask);
+                let mut expected = registers.clone();
+                expected.x[1] = old;
+                let observed = worker.run(&code, &mut registers).unwrap();
+                let context = format!("bytes={bytes} compare={compare:#x} upper={upper:#x}");
+                assert!(observed.fault.is_none(), "{context}");
+                assert_eq!(registers, expected, "{context}");
+                let mut memory = before;
+                if matched {
+                    memory[..bytes].copy_from_slice(&0x55u64.to_le_bytes()[..bytes]);
+                }
+                assert_eq!(worker.snapshot(), memory, "{context}");
+            }
+        }
+    }
+}
 #[test]
 fn native_shared_cas_and_casp_commit_old_registers_only_after_complete_success() {
     let domain = domain();
